@@ -49,7 +49,7 @@ static int vflip = 0;
 static int rotate = 0;
 static int fill_color = 0;
 static int op = 0;
-static int num_frames = 100;
+static int num_frames = 1;
 static int display = 0;
 
 static size_t SRC_WIDTH = 1024;
@@ -80,6 +80,7 @@ static int mem2mem_fd;
 
 static void *p_src_buf[NUM_BUFS], *p_dst_buf[NUM_BUFS];
 static int src_buf_fd[NUM_BUFS], dst_buf_fd[NUM_BUFS];
+static struct sp_bo *src_buf_bo[NUM_BUFS], *dst_buf_bo[NUM_BUFS];
 static size_t src_buf_size[NUM_BUFS], dst_buf_size[NUM_BUFS];
 static unsigned int num_src_bufs = 0, num_dst_bufs = 0;
 
@@ -87,6 +88,65 @@ static struct sp_dev* dev_sp;
 static struct sp_plane** plane_sp;
 static struct sp_crtc* test_crtc_sp;
 static struct sp_plane* test_plane_sp;
+
+static unsigned int get_drm_format(unsigned int v4l2_format)
+{
+    switch (v4l2_format) {
+    case V4L2_PIX_FMT_NV12:
+        return DRM_FORMAT_NV12;
+    case V4L2_PIX_FMT_ARGB32:
+        return DRM_FORMAT_ARGB8888;
+    case V4L2_PIX_FMT_RGB565X:
+        return DRM_FORMAT_RGB565;
+    }
+    return DRM_FORMAT_NV12;
+}
+void fillbuffer(unsigned int v4l2_format, struct sp_bo* bo)
+{
+    if (v4l2_format == V4L2_PIX_FMT_NV12) {
+        int i, j;
+        unsigned char* y = (unsigned char*)bo->map_addr;
+        unsigned char* u = (unsigned char*)bo->map_addr + bo->height * bo->width;
+        unsigned char* v = (unsigned char*)bo->map_addr + bo->height * bo->width + 1;
+        int cs = 2;
+        int width = bo->width;
+        int height = bo->height;
+        int stride = width;
+
+        for (j = 0; j < height; j += 2) {
+            unsigned char* y1p = y + j * stride;
+            unsigned char* y2p = y1p + stride;
+            unsigned char* up = u + (j / 2) * stride * cs / 2;
+            unsigned char* vp = v + (j / 2) * stride * cs / 2;
+
+            for (i = 0; i < width; i += 2) {
+                uint32_t rgb = (((j / 16 + i / 16) & 0x3) << 6) + (((j / 16 + i / 16) & 0xc) << 12) + (((j / 16 + i / 16) & 0x30) << 18);
+                unsigned char* rgbp = (unsigned char*)&rgb;
+                unsigned char y = (0.299 * rgbp[2]) + (0.587 * rgbp[1]) + (0.114 * rgbp[0]);
+
+                *(y2p++) = *(y1p++) = y;
+                *(y2p++) = *(y1p++) = y;
+
+                *up = (rgbp[0] - y) * 0.565 + 128;
+                *vp = (rgbp[2] - y) * 0.713 + 128;
+                up += cs;
+                vp += cs;
+            }
+        }
+    } else if (v4l2_format == V4L2_PIX_FMT_ARGB32) {
+        uint32_t* buf = (uint32_t*)bo->map_addr;
+        int i, j;
+
+        for (j = 0; j < bo->height; j += 1) {
+
+            for (i = 0; i < bo->width; i += 1) {
+                uint32_t rgb = (((j / 16 + i / 16) & 0x3) << 6) + (((j / 16 + i / 16) & 0xc) << 12) + (((j / 16 + i / 16) & 0x30) << 18);
+
+                *(buf++) = 0xff000000 | rgb;
+            }
+        }
+    }
+}
 
 static void init_mem2mem_dev()
 {
@@ -192,10 +252,10 @@ static void init_mem2mem_dev()
         exit(EXIT_FAILURE);
     }
 
-    /* Set format for capture */
-    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = SRC_WIDTH;
-    fmt.fmt.pix.height = SRC_HEIGHT;
+    /* Set format for output */
+    fmt.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+    fmt.fmt.pix.width = DST_WIDTH;
+    fmt.fmt.pix.height = DST_HEIGHT;
     fmt.fmt.pix.pixelformat = src_format;
     fmt.fmt.pix.field = V4L2_FIELD_ANY;
 
@@ -206,10 +266,10 @@ static void init_mem2mem_dev()
         return;
     }
 
-    /* Set format for output */
-    fmt.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-    fmt.fmt.pix.width = DST_WIDTH;
-    fmt.fmt.pix.height = DST_HEIGHT;
+    /* Set format for capture */
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    fmt.fmt.pix.width = SRC_WIDTH;
+    fmt.fmt.pix.height = SRC_HEIGHT;
     fmt.fmt.pix.pixelformat = dst_format;
     fmt.fmt.pix.field = V4L2_FIELD_ANY;
 
@@ -224,39 +284,59 @@ static void init_mem2mem_dev()
 static void process_mem2mem_frame()
 {
     struct v4l2_buffer buf;
-    int ret;
+    int ret, i;
 
-    // buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-    // buf.memory = V4L2_MEMORY_MMAP;
+    i = num_frames;
+    while (i--) {
+        memset(&(buf), 0, sizeof(buf));
+        buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        buf.memory = V4L2_MEMORY_DMABUF;
+        buf.bytesused = src_buf_size[0];
+        buf.index = 0;
+        buf.m.fd = src_buf_fd[0];
+        ret = ioctl(mem2mem_fd, VIDIOC_QBUF, &buf);
+        if (ret != 0) {
+            fprintf(stderr, "%s:%d: ", __func__, __LINE__);
+            perror("ioctl");
+            return;
+        }
 
-    // ret = ioctl(mem2mem_fd, VIDIOC_DQBUF, &buf);
-    // printf("Dequeued source buffer, index: %d\n", buf.index);
+        memset(&(buf), 0, sizeof(buf));
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_DMABUF;
+        buf.index = 0;
+        buf.m.fd = dst_buf_fd[0];
+        ret = ioctl(mem2mem_fd, VIDIOC_QBUF, &buf);
+        if (ret != 0) {
+            fprintf(stderr, "%s:%d: ", __func__, __LINE__);
+            perror("ioctl");
+            return;
+        }
+        
+        memset(&(buf), 0, sizeof(buf));
+        buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        buf.memory = V4L2_MEMORY_DMABUF;
+        ret = ioctl(mem2mem_fd, VIDIOC_DQBUF, &buf);
+        printf("Dequeued source buffer, index: %d\n", buf.index);
 
-    // /* Enqueue back the buffer (note that the index is preserved) */
-    // if (1)
-    // {
-    //     buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-    //     buf.memory = V4L2_MEMORY_MMAP;
-    //     ret = ioctl(mem2mem_fd, VIDIOC_QBUF, &buf);
-    //     if (ret != 0) {
-    //         fprintf(stderr, "%s:%d: ", __func__, __LINE__);
-    //         perror("ioctl");
-    //         return;
-    //     }
-    // }
+        memset(&(buf), 0, sizeof(buf));
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_DMABUF;
+        ret = ioctl(mem2mem_fd, VIDIOC_DQBUF, &buf);
+        if (ret != 0) {
+            fprintf(stderr, "%s:%d: ", __func__, __LINE__);
+            perror("ioctl");
+            return;
+        }
+        printf("Dequeued dst buffer, index: %d\n", buf.index);
 
-    buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    buf.memory = V4L2_MEMORY_DMABUF;
-    ret = ioctl(mem2mem_fd, VIDIOC_DQBUF, &buf);
-    if (ret != 0) {
-        fprintf(stderr, "%s:%d: ", __func__, __LINE__);
-        perror("ioctl");
-        return;
+        if (display == 1) {
+            test_plane_sp->bo = dst_buf_bo[buf.index];
+            set_sp_plane(dev_sp, test_plane_sp, test_crtc_sp, 0, 0);
+        }
+
+        getchar();
     }
-}
-
-static void fill_buf()
-{
 }
 
 static void start_mem2mem()
@@ -294,10 +374,10 @@ static void start_mem2mem()
     num_dst_bufs = reqbuf.count;
     printf("Got %d dst buffers\n", num_dst_bufs);
 
-    {
+    for (i = 0; i < num_src_bufs; ++i) {
         buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
         buf.memory = V4L2_MEMORY_DMABUF;
-        buf.index = 0;
+        buf.index = i;
         ret = ioctl(mem2mem_fd, VIDIOC_QUERYBUF, &buf);
         if (ret != 0) {
             fprintf(stderr, "%s:%d: ", __func__, __LINE__);
@@ -305,29 +385,31 @@ static void start_mem2mem()
             return;
         }
 
-        src_buf_size[0] = buf.length;
+        src_buf_size[i] = buf.length;
 
         struct sp_bo* bo
-            = create_sp_bo(dev_sp, 1, buf.length, 8, 8, DRM_FORMAT_NV12, 0);
+            = create_sp_bo(dev_sp, SRC_WIDTH, SRC_HEIGHT, 0, buf.length * 8 / (SRC_WIDTH * SRC_HEIGHT), get_drm_format(src_format), 0);
         if (!bo) {
             printf("Failed to create gem buf\n");
             exit(-1);
         }
 
-        drmPrimeHandleToFD(dev_sp->fd, bo->handle, 0, &src_buf_fd[0]);
+        drmPrimeHandleToFD(dev_sp->fd, bo->handle, 0, &src_buf_fd[i]);
+        src_buf_bo[i] = bo;
+        fillbuffer(src_format, src_buf_bo[i]);
 
-        memset(&(buf), 0, sizeof(buf));
-        buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-        buf.memory = V4L2_MEMORY_DMABUF;
-        buf.bytesused = 1;
-        buf.index = 0;
-        buf.m.fd = src_buf_fd[0];
-        ret = ioctl(mem2mem_fd, VIDIOC_QBUF, &buf);
-        if (ret != 0) {
-            fprintf(stderr, "%s:%d: ", __func__, __LINE__);
-            perror("ioctl");
-            return;
-        }
+        // memset(&(buf), 0, sizeof(buf));
+        // buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        // buf.memory = V4L2_MEMORY_DMABUF;
+        // buf.bytesused = src_buf_size[i];
+        // buf.index = i;
+        // buf.m.fd = src_buf_fd[i];
+        // ret = ioctl(mem2mem_fd, VIDIOC_QBUF, &buf);
+        // if (ret != 0) {
+        //     fprintf(stderr, "%s:%d: ", __func__, __LINE__);
+        //     perror("ioctl");
+        //     return;
+        // }
     }
 
     for (i = 0; i < num_dst_bufs; ++i) {
@@ -342,35 +424,27 @@ static void start_mem2mem()
         }
 
         dst_buf_size[i] = buf.length;
-
         struct sp_bo* bo
-            = create_sp_bo(dev_sp, 1, buf.length, 8, 8, DRM_FORMAT_NV12, 0);
+            = create_sp_bo(dev_sp, DST_WIDTH, DST_HEIGHT, 0, buf.length * 8 / (DST_WIDTH * DST_HEIGHT), get_drm_format(dst_format), 0);
         if (!bo) {
             printf("Failed to create gem buf\n");
             exit(-1);
         }
 
         drmPrimeHandleToFD(dev_sp->fd, bo->handle, 0, &dst_buf_fd[i]);
+        dst_buf_bo[i] = bo;
 
-        memset(&(buf), 0, sizeof(buf));
-        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = V4L2_MEMORY_DMABUF;
-        buf.index = i;
-        buf.m.fd = dst_buf_fd[i];
-        ret = ioctl(mem2mem_fd, VIDIOC_QBUF, &buf);
-        if (ret != 0) {
-            fprintf(stderr, "%s:%d: ", __func__, __LINE__);
-            perror("ioctl");
-            return;
-        }
-    }
-
-    type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-    ret = ioctl(mem2mem_fd, VIDIOC_STREAMON, &type);
-    if (ret != 0) {
-        fprintf(stderr, "%s:%d: ", __func__, __LINE__);
-        perror("ioctl");
-        return;
+        // memset(&(buf), 0, sizeof(buf));
+        // buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        // buf.memory = V4L2_MEMORY_DMABUF;
+        // buf.index = i;
+        // buf.m.fd = dst_buf_fd[i];
+        // ret = ioctl(mem2mem_fd, VIDIOC_QBUF, &buf);
+        // if (ret != 0) {
+        //     fprintf(stderr, "%s:%d: ", __func__, __LINE__);
+        //     perror("ioctl");
+        //     return;
+        // }
     }
 
     type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -381,14 +455,33 @@ static void start_mem2mem()
         return;
     }
 
+    type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+    ret = ioctl(mem2mem_fd, VIDIOC_STREAMON, &type);
+    if (ret != 0) {
+        fprintf(stderr, "%s:%d: ", __func__, __LINE__);
+        perror("ioctl");
+        return;
+    }
+
     process_mem2mem_frame();
 
+    type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    ret = ioctl(mem2mem_fd, VIDIOC_STREAMOFF, &type);
+    if (ret != 0) {
+        fprintf(stderr, "%s:%d: ", __func__, __LINE__);
+        perror("ioctl");
+        return;
+    }
+
+    type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+    ret = ioctl(mem2mem_fd, VIDIOC_STREAMOFF, &type);
+    if (ret != 0) {
+        fprintf(stderr, "%s:%d: ", __func__, __LINE__);
+        perror("ioctl");
+        return;
+    }
+
     close(mem2mem_fd);
-
-    // munmap(p_src_buf[0], src_buf_size[0]);
-
-    // for (i = 0; i < num_dst_bufs; ++i)
-    //     munmap(p_dst_buf[i], dst_buf_size[i]);
 }
 
 void init_drm_context()
@@ -416,7 +509,7 @@ void init_drm_context()
     test_crtc_sp = &dev_sp->crtcs[0];
     for (i = 0; i < test_crtc_sp->num_planes; i++) {
         plane_sp[i] = get_sp_plane(dev_sp, test_crtc_sp);
-        if (is_supported_format(plane_sp[i], DRM_FORMAT_NV12))
+        if (is_supported_format(plane_sp[i], get_drm_format(dst_format)))
             test_plane_sp = plane_sp[i];
     }
     if (!test_plane_sp) {
@@ -490,6 +583,7 @@ static const struct option long_options[] = {
 
 int main(int argc, char** argv)
 {
+    int i;
     mem2mem_dev_name = (char*)"/dev/video0";
 
     for (;;) {
@@ -612,6 +706,23 @@ int main(int argc, char** argv)
     time_consumed /= 10000;
 
     printf("*[RGA]* : use %llu usecs\n", time_consumed);
+
+    printf("press <ENTER> to exit test application\n");
+
+    getchar();
+
+    for (i = 0; i < num_src_bufs; ++i) {
+        close(src_buf_fd[i]);
+        free_sp_bo(src_buf_bo[i]);
+    }
+
+    for (i = 0; i < num_dst_bufs; ++i) {
+        close(dst_buf_fd[i]);
+        free_sp_bo(dst_buf_bo[i]);
+    }
+
+    test_plane_sp->bo = NULL;
+    destroy_sp_dev(dev_sp);
 
     return 0;
 }

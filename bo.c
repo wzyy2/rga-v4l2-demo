@@ -75,11 +75,18 @@ int add_fb_sp_bo(struct sp_bo* bo, uint32_t format)
     pitches[0] = bo->pitch;
     offsets[0] = 0;
 
+    if(format == DRM_FORMAT_NV12) {
+	handles[1] = bo->handle;
+	pitches[0] = bo->width;
+	pitches[1] = bo->width;
+	offsets[1] = bo->width * bo->height;
+    }
+
     ret = drmModeAddFB2(bo->dev->fd, bo->width, bo->height,
         format, handles, pitches, offsets,
         &bo->fb_id, bo->flags);
     if (ret) {
-        printf("failed to create fb ret=%d\n", ret);
+        printf("failed to create fb ret=%d %d %d %d\n", ret, bo->pitch, bo->width, bo->bpp);
         return ret;
     }
     return 0;

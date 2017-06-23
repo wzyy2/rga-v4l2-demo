@@ -80,7 +80,7 @@ struct sp_dev* create_sp_dev(void)
     drmModeRes* r = NULL;
     drmModePlaneRes* pr = NULL;
 
-    fd = open("/dev/dri/card0", O_RDWR);
+    fd = open("/dev/dri/card0", O_RDWR | O_CLOEXEC);
     if (fd < 0) {
         printf("failed to open card0\n");
         return NULL;
