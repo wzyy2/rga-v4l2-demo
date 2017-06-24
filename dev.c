@@ -94,7 +94,6 @@ struct sp_dev* create_sp_dev(void)
 
     dev->fd = fd;
 
-#if 0
 	ret = drmSetClientCap(dev->fd, DRM_CLIENT_CAP_ATOMIC, 1);
 	if (ret) {
 		printf("failed to set client cap atomic\n");
@@ -105,7 +104,6 @@ struct sp_dev* create_sp_dev(void)
 		printf("failed to set client cap\n");
 		goto err;
 	}
-#endif
 
     r = drmModeGetResources(dev->fd);
     if (!r) {

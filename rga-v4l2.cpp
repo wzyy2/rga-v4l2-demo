@@ -92,12 +92,32 @@ static struct sp_plane* test_plane_sp;
 static unsigned int get_drm_format(unsigned int v4l2_format)
 {
     switch (v4l2_format) {
-    case V4L2_PIX_FMT_NV12:
+    case V4L2_PIX_FMT_NV12: //0
         return DRM_FORMAT_NV12;
-    case V4L2_PIX_FMT_ARGB32:
+    case V4L2_PIX_FMT_ARGB32: //1
         return DRM_FORMAT_ARGB8888;
-    case V4L2_PIX_FMT_RGB565X:
+    case V4L2_PIX_FMT_RGB24: //2
+        return DRM_FORMAT_RGB888;
+    case V4L2_PIX_FMT_RGB565: //3
         return DRM_FORMAT_RGB565;
+    case V4L2_PIX_FMT_YUV420: //4
+        return DRM_FORMAT_YUV420;
+    case V4L2_PIX_FMT_XRGB32: //5
+        return DRM_FORMAT_XRGB8888;
+    case V4L2_PIX_FMT_ABGR32: //6
+        return DRM_FORMAT_ABGR8888;
+    case V4L2_PIX_FMT_XBGR32: //7
+        return DRM_FORMAT_XBGR8888;
+    case V4L2_PIX_FMT_ARGB555: //8
+        return DRM_FORMAT_ARGB1555;
+    case V4L2_PIX_FMT_ARGB444: //9
+        return DRM_FORMAT_ARGB4444;
+    case V4L2_PIX_FMT_NV61: // 10
+        return DRM_FORMAT_NV61;
+    case V4L2_PIX_FMT_NV16: //11
+        return DRM_FORMAT_NV16;
+    case V4L2_PIX_FMT_YUV422P: //12
+        return DRM_FORMAT_YUV422;
     }
     return DRM_FORMAT_NV12;
 }
@@ -143,6 +163,20 @@ void fillbuffer(unsigned int v4l2_format, struct sp_bo* bo)
                 uint32_t rgb = (((j / 16 + i / 16) & 0x3) << 6) + (((j / 16 + i / 16) & 0xc) << 12) + (((j / 16 + i / 16) & 0x30) << 18);
 
                 *(buf++) = 0xff000000 | rgb;
+            }
+        }
+    } else if (v4l2_format == V4L2_PIX_FMT_RGB24) {
+        uint8_t* buf = (uint8_t*)bo->map_addr;
+        int i, j;
+
+        for (j = 0; j < bo->height; j += 1) {
+
+            for (i = 0; i < bo->width; i += 1) {
+                uint32_t rgb = (((j / 16 + i / 16) & 0x3) << 6) + (((j / 16 + i / 16) & 0xc) << 12) + (((j / 16 + i / 16) & 0x30) << 18);
+
+                *(buf++) = 0xff & rgb;
+                *(buf++) = 0xff & (rgb >> 8);
+                *(buf++) = 0xff & (rgb >> 16);
             }
         }
     }
@@ -254,8 +288,8 @@ static void init_mem2mem_dev()
 
     /* Set format for output */
     fmt.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-    fmt.fmt.pix.width = DST_WIDTH;
-    fmt.fmt.pix.height = DST_HEIGHT;
+    fmt.fmt.pix.width = SRC_WIDTH;
+    fmt.fmt.pix.height = SRC_HEIGHT;
     fmt.fmt.pix.pixelformat = src_format;
     fmt.fmt.pix.field = V4L2_FIELD_ANY;
 
@@ -268,8 +302,8 @@ static void init_mem2mem_dev()
 
     /* Set format for capture */
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = SRC_WIDTH;
-    fmt.fmt.pix.height = SRC_HEIGHT;
+    fmt.fmt.pix.width = DST_WIDTH;
+    fmt.fmt.pix.height = DST_HEIGHT;
     fmt.fmt.pix.pixelformat = dst_format;
     fmt.fmt.pix.field = V4L2_FIELD_ANY;
 
@@ -288,6 +322,8 @@ static void process_mem2mem_frame()
 
     i = num_frames;
     while (i--) {
+        clock_gettime(CLOCK_MONOTONIC, &start);
+
         memset(&(buf), 0, sizeof(buf));
         buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
         buf.memory = V4L2_MEMORY_DMABUF;
@@ -312,7 +348,7 @@ static void process_mem2mem_frame()
             perror("ioctl");
             return;
         }
-        
+
         memset(&(buf), 0, sizeof(buf));
         buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
         buf.memory = V4L2_MEMORY_DMABUF;
@@ -330,13 +366,24 @@ static void process_mem2mem_frame()
         }
         printf("Dequeued dst buffer, index: %d\n", buf.index);
 
+        clock_gettime(CLOCK_MONOTONIC, &end);
+
+        time_consumed = (end.tv_sec - start.tv_sec) * 1000000000ULL;
+        time_consumed += (end.tv_nsec - start.tv_nsec);
+        time_consumed /= 1000;
+
+        printf("*[RGA]* : use %f msecs\n", time_consumed * 1.0 / 1000);
+
         if (display == 1) {
+            //fillbuffer(dst_format, dst_buf_bo[buf.index]);
             test_plane_sp->bo = dst_buf_bo[buf.index];
             set_sp_plane(dev_sp, test_plane_sp, test_crtc_sp, 0, 0);
         }
-
-        getchar();
     }
+
+    printf("press <ENTER> to exit test application\n");
+
+    getchar();
 }
 
 static void start_mem2mem()
@@ -397,19 +444,6 @@ static void start_mem2mem()
         drmPrimeHandleToFD(dev_sp->fd, bo->handle, 0, &src_buf_fd[i]);
         src_buf_bo[i] = bo;
         fillbuffer(src_format, src_buf_bo[i]);
-
-        // memset(&(buf), 0, sizeof(buf));
-        // buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-        // buf.memory = V4L2_MEMORY_DMABUF;
-        // buf.bytesused = src_buf_size[i];
-        // buf.index = i;
-        // buf.m.fd = src_buf_fd[i];
-        // ret = ioctl(mem2mem_fd, VIDIOC_QBUF, &buf);
-        // if (ret != 0) {
-        //     fprintf(stderr, "%s:%d: ", __func__, __LINE__);
-        //     perror("ioctl");
-        //     return;
-        // }
     }
 
     for (i = 0; i < num_dst_bufs; ++i) {
@@ -433,18 +467,6 @@ static void start_mem2mem()
 
         drmPrimeHandleToFD(dev_sp->fd, bo->handle, 0, &dst_buf_fd[i]);
         dst_buf_bo[i] = bo;
-
-        // memset(&(buf), 0, sizeof(buf));
-        // buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        // buf.memory = V4L2_MEMORY_DMABUF;
-        // buf.index = i;
-        // buf.m.fd = dst_buf_fd[i];
-        // ret = ioctl(mem2mem_fd, VIDIOC_QBUF, &buf);
-        // if (ret != 0) {
-        //     fprintf(stderr, "%s:%d: ", __func__, __LINE__);
-        //     perror("ioctl");
-        //     return;
-        // }
     }
 
     type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -493,28 +515,31 @@ void init_drm_context()
         exit(-1);
     }
 
-    ret = initialize_screens(dev_sp);
-    if (ret) {
-        printf("initialize_screens failed\n");
-        printf("please close display server for test!\n");
-        exit(-1);
-    }
-    plane_sp = (struct sp_plane**)calloc(dev_sp->num_planes, sizeof(*plane_sp));
-    if (!plane_sp) {
-        printf("calloc plane array failed\n");
-        exit(-1);
-        ;
-    }
+    if (display) {
+        ret = initialize_screens(dev_sp);
+        if (ret) {
+            printf("initialize_screens failed\n");
+            printf("please close display server for test!\n");
+            exit(-1);
+        }
 
-    test_crtc_sp = &dev_sp->crtcs[0];
-    for (i = 0; i < test_crtc_sp->num_planes; i++) {
-        plane_sp[i] = get_sp_plane(dev_sp, test_crtc_sp);
-        if (is_supported_format(plane_sp[i], get_drm_format(dst_format)))
-            test_plane_sp = plane_sp[i];
-    }
-    if (!test_plane_sp) {
-        printf("test_plane is NULL\n");
-        exit(-1);
+        plane_sp = (struct sp_plane**)calloc(dev_sp->num_planes, sizeof(*plane_sp));
+        if (!plane_sp) {
+            printf("calloc plane array failed\n");
+            exit(-1);
+            ;
+        }
+
+        test_crtc_sp = &dev_sp->crtcs[0];
+        for (i = 0; i < test_crtc_sp->num_planes; i++) {
+            plane_sp[i] = get_sp_plane(dev_sp, test_crtc_sp);
+            if (is_supported_format(plane_sp[i], get_drm_format(dst_format)))
+                test_plane_sp = plane_sp[i];
+        }
+        if (!test_plane_sp) {
+            printf("test_plane is NULL\n");
+            exit(-1);
+        }
     }
 }
 
@@ -525,14 +550,14 @@ static void usage(FILE* fp, int argc, char** argv)
         "Options:\n"
         "--device                   mem2mem device name [/dev/video0]\n"
         "--hel                      Print this message\n"
-        "--src-fmt                  Source video format, 0 = NV12, 1 = ARGB32, 2 = RGB565\n"
+        "--src-fmt                  Source video format, 0 = NV12, 1 = ARGB32, 2 = RGB888\n"
         "--src-width                Source video width\n"
         "--src-height               Source video height\n"
         "--src-crop-x               Source video crop X offset [0]\n"
         "--src-crop-y               Source video crop Y offset [0]\n"
         "--src-crop-width           Source video crop width [width]\n"
         "--src-crop-height          Source video crop height [height]\n"
-        "--dst-fmt                  Destination video format, 0 = NV12, 1 = ARGB32, 2 = RGB565\n"
+        "--dst-fmt                  Destination video format, 0 = NV12, 1 = ARGB32, 2 = RGB888\n"
         "--dst-width                Destination video width\n"
         "--dst-height               Destination video height\n"
         "--dst-crop-x               Destination video crop X offset [0]\n"
@@ -611,7 +636,27 @@ int main(int argc, char** argv)
             } else if (c == 1) {
                 src_format = V4L2_PIX_FMT_ARGB32;
             } else if (c == 2) {
-                src_format = V4L2_PIX_FMT_RGB565X;
+                src_format = V4L2_PIX_FMT_RGB24;
+            } else if (c == 3) {
+                src_format = V4L2_PIX_FMT_RGB565;
+            } else if (c == 4) {
+                src_format = V4L2_PIX_FMT_YUV420;
+            } else if (c == 5) {
+                src_format = V4L2_PIX_FMT_XRGB32;
+            } else if (c == 6) {
+                src_format = V4L2_PIX_FMT_ABGR32;
+            } else if (c == 7) {
+                src_format = V4L2_PIX_FMT_XBGR32;
+            } else if (c == 8) {
+                src_format = V4L2_PIX_FMT_ARGB555;
+            } else if (c == 9) {
+                src_format = V4L2_PIX_FMT_ARGB444;
+            } else if (c == 10) {
+                src_format = V4L2_PIX_FMT_NV61;
+            } else if (c == 11) {
+                src_format = V4L2_PIX_FMT_NV16;
+            } else if (c == 12) {
+                src_format = V4L2_PIX_FMT_YUV422P;
             }
             break;
         case 3:
@@ -639,7 +684,27 @@ int main(int argc, char** argv)
             } else if (c == 1) {
                 dst_format = V4L2_PIX_FMT_ARGB32;
             } else if (c == 2) {
-                dst_format = V4L2_PIX_FMT_RGB565X;
+                dst_format = V4L2_PIX_FMT_RGB24;
+            } else if (c == 3) {
+                dst_format = V4L2_PIX_FMT_RGB565;
+            } else if (c == 4) {
+                dst_format = V4L2_PIX_FMT_YUV420;
+            } else if (c == 5) {
+                dst_format = V4L2_PIX_FMT_XRGB32;
+            } else if (c == 6) {
+                dst_format = V4L2_PIX_FMT_ABGR32;
+            } else if (c == 7) {
+                dst_format = V4L2_PIX_FMT_XBGR32;
+            } else if (c == 8) {
+                dst_format = V4L2_PIX_FMT_ARGB555;
+            } else if (c == 9) {
+                dst_format = V4L2_PIX_FMT_ARGB444;
+            } else if (c == 10) {
+                dst_format = V4L2_PIX_FMT_NV61;
+            } else if (c == 11) {
+                dst_format = V4L2_PIX_FMT_NV16;
+            } else if (c == 12) {
+                dst_format = V4L2_PIX_FMT_YUV422P;
             }
             break;
         case 10:
@@ -664,7 +729,7 @@ int main(int argc, char** argv)
             op = atoi(optarg);
             break;
         case 17:
-            fill_color = atoi(optarg);
+            sscanf(optarg, "%x", &fill_color);
             break;
         case 18:
             rotate = atoi(optarg);
@@ -682,10 +747,10 @@ int main(int argc, char** argv)
             display = atoi(optarg);
             break;
         case 23:
-            alpha_ctrl0 = atoi(optarg);
+            sscanf(optarg, "%x", &alpha_ctrl0);
             break;
         case 24:
-            alpha_ctrl1 = atoi(optarg);
+            sscanf(optarg, "%x", &alpha_ctrl1);
             break;
         default:
             usage(stderr, argc, argv);
@@ -695,21 +760,7 @@ int main(int argc, char** argv)
 
     init_drm_context();
 
-    clock_gettime(CLOCK_MONOTONIC, &start);
-
     start_mem2mem();
-
-    clock_gettime(CLOCK_MONOTONIC, &end);
-
-    time_consumed = (end.tv_sec - start.tv_sec) * 1000000000ULL;
-    time_consumed += (end.tv_nsec - start.tv_nsec);
-    time_consumed /= 10000;
-
-    printf("*[RGA]* : use %llu usecs\n", time_consumed);
-
-    printf("press <ENTER> to exit test application\n");
-
-    getchar();
 
     for (i = 0; i < num_src_bufs; ++i) {
         close(src_buf_fd[i]);
@@ -721,7 +772,8 @@ int main(int argc, char** argv)
         free_sp_bo(dst_buf_bo[i]);
     }
 
-    test_plane_sp->bo = NULL;
+    if (display)
+        test_plane_sp->bo = NULL;
     destroy_sp_dev(dev_sp);
 
     return 0;
