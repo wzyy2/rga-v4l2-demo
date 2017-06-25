@@ -187,6 +187,7 @@ static void init_mem2mem_dev()
     struct v4l2_capability cap;
     struct v4l2_format fmt;
     struct v4l2_control ctrl;
+    struct v4l2_crop crop;
     int ret;
 
     mem2mem_fd = open(mem2mem_dev_name, O_RDWR | O_CLOEXEC, 0);
@@ -256,20 +257,6 @@ static void init_mem2mem_dev()
                 __func__, __LINE__);
     }
 
-    if (SRC_CROP_X != 0 || SRC_CROP_Y != 0 || SRC_CROP_W != 0 || SRC_CROP_H != 0) {
-        if (SRC_CROP_W == 0 && SRC_CROP_H == 0) {
-            SRC_CROP_W = SRC_WIDTH;
-            SRC_CROP_W = SRC_HEIGHT;
-        }
-    }
-
-    if (DST_CROP_X != 0 || DST_CROP_Y != 0 || DST_CROP_W != 0 || DST_CROP_H != 0) {
-        if (DST_CROP_W == 0 && DST_CROP_H == 0) {
-            DST_CROP_W = DST_WIDTH;
-            DST_CROP_W = DST_HEIGHT;
-        }
-    }
-
     ret = ioctl(mem2mem_fd, VIDIOC_QUERYCAP, &cap);
     if (ret != 0) {
         fprintf(stderr, "%s:%d: ", __func__, __LINE__);
@@ -312,6 +299,47 @@ static void init_mem2mem_dev()
         fprintf(stderr, "%s:%d: ", __func__, __LINE__);
         perror("ioctl");
         return;
+    }
+
+    if (SRC_CROP_X != 0 || SRC_CROP_Y != 0 || SRC_CROP_W != 0 || SRC_CROP_H != 0) {
+        if (SRC_CROP_W == 0 && SRC_CROP_H == 0) {
+            SRC_CROP_W = SRC_WIDTH;
+            SRC_CROP_H = SRC_HEIGHT;
+        }
+
+        memset(&crop, 0, sizeof(struct v4l2_crop));
+
+        crop.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        crop.c.left = SRC_CROP_X;
+        crop.c.top = SRC_CROP_Y;
+        crop.c.width = SRC_CROP_W;
+        crop.c.height = SRC_CROP_H;
+        ret = ioctl(mem2mem_fd, VIDIOC_S_CROP, &crop);
+        if (ret != 0) {
+            fprintf(stderr, "%s:%d: ", __func__, __LINE__);
+            perror("ioctl");
+            return;
+        }
+    }
+
+    if (DST_CROP_X != 0 || DST_CROP_Y != 0 || DST_CROP_W != 0 || DST_CROP_H != 0) {
+        if (DST_CROP_W == 0 && DST_CROP_H == 0) {
+            DST_CROP_W = DST_WIDTH;
+            DST_CROP_H = DST_HEIGHT;
+        }
+        memset(&crop, 0, sizeof(struct v4l2_crop));
+
+        crop.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        crop.c.left = DST_CROP_X;
+        crop.c.top = DST_CROP_Y;
+        crop.c.width = DST_CROP_W;
+        crop.c.height = DST_CROP_H;
+        ret = ioctl(mem2mem_fd, VIDIOC_S_CROP, &crop);
+        if (ret != 0) {
+            fprintf(stderr, "%s:%d: ", __func__, __LINE__);
+            perror("ioctl");
+            return;
+        }
     }
 }
 
