@@ -105,9 +105,9 @@ static unsigned int get_drm_format(unsigned int v4l2_format)
     case V4L2_PIX_FMT_XRGB32: //5
         return DRM_FORMAT_XRGB8888;
     case V4L2_PIX_FMT_ABGR32: //6
-        return DRM_FORMAT_ABGR8888;
+        return DRM_FORMAT_BGRA8888;
     case V4L2_PIX_FMT_XBGR32: //7
-        return DRM_FORMAT_XBGR8888;
+        return DRM_FORMAT_BGRX8888;
     case V4L2_PIX_FMT_ARGB555: //8
         return DRM_FORMAT_ARGB1555;
     case V4L2_PIX_FMT_ARGB444: //9
