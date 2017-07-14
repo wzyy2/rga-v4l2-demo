@@ -31,14 +31,22 @@
 #include "dev.h"
 #include "modeset.h"
 
-#define V4L2_CID_RGA_OP (0x00980900 | 0x1001)
-#define V4L2_CID_RGA_ALHPA_REG0 (0x00980900 | 0x1002)
-#define V4L2_CID_RGA_ALHPA_REG1 (0x00980900 | 0x1003)
-
 /* operation values */
-#define OP_COPY 0
-#define OP_SOLID_FILL 1
-#define OP_ALPHA_BLEND 2
+#define V4L2_CID_BLEND			(V4L2_CID_BASE+43)
+enum v4l2_blend_mode {
+	V4L2_BLEND_SRC			= 0,
+	V4L2_BLEND_SRCATOP		= 1,
+	V4L2_BLEND_SRCIN		= 2,
+	V4L2_BLEND_SRCOUT		= 3,
+	V4L2_BLEND_SRCOVER		= 4,
+	V4L2_BLEND_DST			= 5,
+	V4L2_BLEND_DSTATOP		= 6,
+	V4L2_BLEND_DSTIN		= 7,
+	V4L2_BLEND_DSTOUT		= 8,
+	V4L2_BLEND_DSTOVER		= 9,
+	V4L2_BLEND_ADD			= 10,
+	V4L2_BLEND_CLEAR		= 11,
+};
 
 #define NUM_BUFS 4
 
@@ -70,9 +78,6 @@ static size_t DST_CROP_H = 0;
 
 static int src_format = V4L2_PIX_FMT_NV12;
 static int dst_format = V4L2_PIX_FMT_NV12;
-
-static int alpha_ctrl0 = 0;
-static int alpha_ctrl1 = 0;
 
 static struct timespec start, end;
 static unsigned long long time_consumed;
@@ -182,6 +187,21 @@ void fillbuffer(unsigned int v4l2_format, struct sp_bo* bo)
     }
 }
 
+void fillbuffer2(unsigned int v4l2_format, struct sp_bo* bo)
+{
+    if (v4l2_format == V4L2_PIX_FMT_ARGB32) {
+        uint32_t* buf = (uint32_t*)bo->map_addr;
+        int i, j;
+
+        for (j = 0; j < bo->height; j += 1) {
+
+            for (i = 0; i < bo->width / 2; i += 1) {
+                *(buf++) = 0x550000ff;
+            }
+        }
+    }
+}
+
 static void init_mem2mem_dev()
 {
     struct v4l2_capability cap;
@@ -233,29 +253,12 @@ static void init_mem2mem_dev()
                 __func__, __LINE__);
     }
 
-    ctrl.id = V4L2_CID_RGA_OP;
+    ctrl.id = V4L2_CID_BLEND;
     ctrl.value = op;
     ret = ioctl(mem2mem_fd, VIDIOC_S_CTRL, &ctrl);
     if (ret != 0)
         fprintf(stderr, "%s:%d: Set OP failed\n",
             __func__, __LINE__);
-
-    if (alpha_ctrl0 != 0) {
-        ctrl.id = V4L2_CID_RGA_ALHPA_REG0;
-        ctrl.value = alpha_ctrl0;
-        ret = ioctl(mem2mem_fd, VIDIOC_S_CTRL, &ctrl);
-        if (ret != 0)
-            fprintf(stderr, "%s:%d: Set Alpha0 failed\n",
-                __func__, __LINE__);
-    }
-    if (alpha_ctrl1 != 0) {
-        ctrl.id = V4L2_CID_RGA_ALHPA_REG1;
-        ctrl.value = alpha_ctrl1;
-        ret = ioctl(mem2mem_fd, VIDIOC_S_CTRL, &ctrl);
-        if (ret != 0)
-            fprintf(stderr, "%s:%d: Set Alpha1 failed\n",
-                __func__, __LINE__);
-    }
 
     ret = ioctl(mem2mem_fd, VIDIOC_QUERYCAP, &cap);
     if (ret != 0) {
@@ -403,9 +406,15 @@ static void process_mem2mem_frame()
         printf("*[RGA]* : use %f msecs\n", time_consumed * 1.0 / 1000);
 
         if (display == 1) {
-            //fillbuffer(dst_format, dst_buf_bo[buf.index]);
             test_plane_sp->bo = dst_buf_bo[buf.index];
             set_sp_plane(dev_sp, test_plane_sp, test_crtc_sp, 0, 0);
+
+            if (0) {
+                unsigned int *addr = (unsigned int *)test_plane_sp->bo->map_addr;
+                printf("dump buffer : %x %x %x \n", addr[0], addr[1], addr[2]);
+                usleep(1000 * 1000);
+                printf("dump buffer2 : %x %x %x \n", addr[0], addr[1], addr[2]);
+            }
         }
     }
 
@@ -495,6 +504,7 @@ static void start_mem2mem()
 
         drmPrimeHandleToFD(dev_sp->fd, bo->handle, 0, &dst_buf_fd[i]);
         dst_buf_bo[i] = bo;
+        fillbuffer2(dst_format, bo);
     }
 
     type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -599,8 +609,6 @@ static void usage(FILE* fp, int argc, char** argv)
         "--vflip                    Vertical Mirror\n"
         "--num-frames               Number of frames to process [100]\n"
         "--display                  Display\n"
-        "--alpha0                   Alpha reg 0\n"
-        "--alpha1                   Alpha reg 1\n"
         "",
         argv[0]);
 }
@@ -629,8 +637,6 @@ static const struct option long_options[] = {
     { "vflip", required_argument, NULL, 0 },
     { "num-frames", required_argument, NULL, 0 },
     { "display", required_argument, NULL, 0 },
-    { "alpha0", required_argument, NULL, 0 },
-    { "alpha1", required_argument, NULL, 0 },
     { 0, 0, 0, 0 }
 };
 
@@ -773,12 +779,6 @@ int main(int argc, char** argv)
             break;
         case 22:
             display = atoi(optarg);
-            break;
-        case 23:
-            sscanf(optarg, "%x", &alpha_ctrl0);
-            break;
-        case 24:
-            sscanf(optarg, "%x", &alpha_ctrl1);
             break;
         default:
             usage(stderr, argc, argv);
