@@ -32,7 +32,7 @@
 #include "modeset.h"
 
 /* operation values */
-#define V4L2_CID_BLEND			(V4L2_CID_BASE+43)
+#define V4L2_CID_BLEND			(V4L2_CID_IMAGE_PROC_CLASS_BASE + 4)
 enum v4l2_blend_mode {
 	V4L2_BLEND_SRC			= 0,
 	V4L2_BLEND_SRCATOP		= 1,
