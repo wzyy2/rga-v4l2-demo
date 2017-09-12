@@ -252,14 +252,14 @@ static void init_mem2mem_dev()
             fprintf(stderr, "%s:%d: Set Fill Color failed\n",
                 __func__, __LINE__);
     }
-
+#if 0
     ctrl.id = V4L2_CID_BLEND;
     ctrl.value = op;
     ret = ioctl(mem2mem_fd, VIDIOC_S_CTRL, &ctrl);
     if (ret != 0)
         fprintf(stderr, "%s:%d: Set OP failed\n",
             __func__, __LINE__);
-
+#endif
     ret = ioctl(mem2mem_fd, VIDIOC_QUERYCAP, &cap);
     if (ret != 0) {
         fprintf(stderr, "%s:%d: ", __func__, __LINE__);
@@ -304,6 +304,7 @@ static void init_mem2mem_dev()
         return;
     }
 
+#if 0
     if (SRC_CROP_X != 0 || SRC_CROP_Y != 0 || SRC_CROP_W != 0 || SRC_CROP_H != 0) {
         if (SRC_CROP_W == 0 && SRC_CROP_H == 0) {
             SRC_CROP_W = SRC_WIDTH;
@@ -344,6 +345,7 @@ static void init_mem2mem_dev()
             return;
         }
     }
+#endif
 }
 
 static void process_mem2mem_frame()
