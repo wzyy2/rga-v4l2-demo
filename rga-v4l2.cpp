@@ -304,6 +304,7 @@ static void init_mem2mem_dev()
         return;
     }
 
+    printf("crop was replaced by selection \n");
 #if 0
     if (SRC_CROP_X != 0 || SRC_CROP_Y != 0 || SRC_CROP_W != 0 || SRC_CROP_H != 0) {
         if (SRC_CROP_W == 0 && SRC_CROP_H == 0) {
@@ -570,6 +571,7 @@ void init_drm_context()
             ;
         }
 
+	printf("If nothing is display, change it to crtcs[1] \n");
         test_crtc_sp = &dev_sp->crtcs[0];
         for (i = 0; i < test_crtc_sp->num_planes; i++) {
             plane_sp[i] = get_sp_plane(dev_sp, test_crtc_sp);
